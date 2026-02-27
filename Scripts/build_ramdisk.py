@@ -28,6 +28,11 @@ import subprocess
 import sys
 import tempfile
 
+# Ensure sibling modules (patch_firmware) are importable when run from any CWD
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
 from keystone import Ks, KS_ARCH_ARM64, KS_MODE_LITTLE_ENDIAN as KS_MODE_LE
 from pyimg4 import IM4P
 
@@ -118,8 +123,7 @@ def setup_input(vm_dir):
         return input_dir
 
     # Look for archive next to this script, then in vm_dir
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    for search_dir in (script_dir, vm_dir):
+    for search_dir in (_SCRIPT_DIR, vm_dir):
         archive = os.path.join(search_dir, INPUT_ARCHIVE)
         if os.path.isfile(archive):
             print(f"  Extracting {INPUT_ARCHIVE}...")

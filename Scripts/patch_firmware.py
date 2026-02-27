@@ -2,7 +2,7 @@
 """
 patch_firmware.py — Patch all boot-chain components for vphone600.
 
-Run this AFTER prepare_firmware_v2.sh from the VM directory.
+Run this AFTER prepare_firmware.sh from the VM directory.
 
 Usage:
     python3 patch_firmware.py [vm_directory]
