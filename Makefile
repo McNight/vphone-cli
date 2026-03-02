@@ -44,13 +44,10 @@ help:
 	@echo ""
 	@echo "Setup (one-time):"
 	@echo "  make setup_tools             Install all tools (brew, trustcache, libimobiledevice, venv)"
-	@echo "  make setup_venv              Create Python .venv"
-	@echo "  make setup_libimobiledevice  Build libimobiledevice toolchain"
 	@echo ""
 	@echo "Build:"
 	@echo "  make build                   Build + sign vphone-cli"
-	@echo "  make vphoned                 Cross-compile vphoned for iOS"
-	@echo "  make vphoned_sign            Sign vphoned (requires ldid)"
+	@echo "  make vphoned                 Cross-compile + sign vphoned for iOS"
 	@echo "  make install                 Build + copy to ./bin/"
 	@echo "  make clean                   Remove all build artifacts (keeps IPSWs)"
 	@echo ""
@@ -133,16 +130,12 @@ install: build
 	cp -f $(BINARY) ./bin/vphone-cli
 	@echo "Installed to ./bin/vphone-cli"
 
-# Cross-compile vphoned daemon for iOS arm64 (installed into VM by cfw_install)
+# Cross-compile + sign vphoned daemon for iOS arm64 (requires ldid)
 .PHONY: vphoned
 vphoned:
-	$(MAKE) -C $(SCRIPTS)/vphoned GIT_HASH=$(GIT_HASH)
-
-# Sign vphoned with entitlements (requires ldid from brew install ldid-procursus)
-.PHONY: vphoned_sign
-vphoned_sign: vphoned
 	@command -v ldid >/dev/null 2>&1 \
 		|| (echo "Error: ldid not found. Run: brew install ldid-procursus" && exit 1)
+	$(MAKE) -C $(SCRIPTS)/vphoned GIT_HASH=$(GIT_HASH)
 	@echo "=== Signing vphoned ==="
 	cp $(SCRIPTS)/vphoned/vphoned $(VM_DIR)/.vphoned.signed
 	ldid \
@@ -160,7 +153,7 @@ vphoned_sign: vphoned
 vm_new:
 	zsh $(SCRIPTS)/vm_create.sh --dir $(VM_DIR) --disk-size $(DISK_SIZE)
 
-boot: bundle vphoned_sign
+boot: bundle vphoned
 	cd $(VM_DIR) && "$(CURDIR)/$(BUNDLE_BIN)" \
 		--rom ./AVPBooter.vresearch1.bin \
 		--disk ./Disk.img \
