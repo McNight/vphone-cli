@@ -28,6 +28,8 @@ BOOT_FIFO_FD=""
 VM_DIR="${VM_DIR:-vm}"
 VM_DIR_ABS="${VM_DIR:A}"
 AUTO_KILL_VM_LOCKS="${AUTO_KILL_VM_LOCKS:-0}"
+POST_RESTORE_KILL_DELAY="${POST_RESTORE_KILL_DELAY:-30}"
+POST_KILL_SETTLE_DELAY="${POST_KILL_SETTLE_DELAY:-5}"
 JB_MODE=0
 SKIP_PROJECT_SETUP=0
 
@@ -279,6 +281,31 @@ stop_boot_dfu() {
   DFU_PID=""
 }
 
+wait_for_post_restore_reboot() {
+  local remaining="${POST_RESTORE_KILL_DELAY}"
+  local panic_seen=0
+
+  echo "[*] Restore complete; waiting up to ${POST_RESTORE_KILL_DELAY}s for reboot/panic before stopping DFU..."
+  while (( remaining > 0 )); do
+    if [[ -f "$DFU_LOG" ]] && grep -Eiq 'panic|kernel panic' "$DFU_LOG"; then
+      panic_seen=1
+      break
+    fi
+    if [[ -n "$DFU_PID" ]] && ! kill -0 "$DFU_PID" 2>/dev/null; then
+      echo "[*] DFU process exited during post-restore reboot window."
+      return
+    fi
+    sleep 1
+    (( remaining-- ))
+  done
+
+  if (( panic_seen == 1 )); then
+    echo "[+] Panic marker observed; stopping DFU now."
+  else
+    echo "[*] No panic marker observed in ${POST_RESTORE_KILL_DELAY}s; stopping DFU anyway."
+  fi
+}
+
 wait_for_recovery() {
   local irecovery="${PROJECT_ROOT}/.limd/bin/irecovery"
   [[ -x "$irecovery" ]] || die "irecovery not found at $irecovery"
@@ -393,7 +420,10 @@ main() {
   wait_for_recovery
   run_make "Restore" restore_get_shsh
   run_make "Restore" restore
+  wait_for_post_restore_reboot
   stop_boot_dfu
+  echo "[*] Waiting ${POST_KILL_SETTLE_DELAY}s for cleanup before ramdisk stage..."
+  sleep "$POST_KILL_SETTLE_DELAY"
 
   echo ""
   echo "=== Ramdisk + CFW phase ==="
@@ -406,8 +436,8 @@ main() {
   sleep 10 # for some reason there is a statistical faiure here if not enough time is given to initialization
 
   run_make "CFW install" "$cfw_install_target"
-  stop_iproxy_2222
   stop_boot_dfu
+  stop_iproxy_2222
 
   echo ""
   echo "=== First boot ==="
