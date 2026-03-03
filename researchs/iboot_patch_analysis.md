@@ -4,10 +4,11 @@ Analysis of iBoot patches for vresearch101 from PCC-CloudOS 26.3 (23D128).
 
 ## Source Files
 
-All six vresearch101 iBoot variants share just two unique binaries:
+All six vresearch101 iBoot variants share just two unique **payload** binaries
+(after IM4P decode/decompress):
 
-| Variant | IM4P Size | Raw Size | SHA256 (first 16) | Fourcc |
-|---------|-----------|----------|-------------------|--------|
+| Variant | IM4P Size | Raw Size | Payload SHA256 (first 16) | Fourcc |
+|---------|-----------|----------|---------------------------|--------|
 | iBSS RELEASE | 303068 | 605312 | `4c9e7df663af76fa` | ibss |
 | iBEC RELEASE | 303098 | 605312 | `4c9e7df663af76fa` | ibec |
 | LLB RELEASE | 303068 | 605312 | `4c9e7df663af76fa` | illb |
@@ -15,12 +16,21 @@ All six vresearch101 iBoot variants share just two unique binaries:
 | iBEC RESEARCH | 308218 | 622512 | `8c3cc980f25f9027` | ibec |
 | LLB RESEARCH | 308188 | 622512 | `8c3cc980f25f9027` | illb |
 
-**Key finding:** iBSS, iBEC, and LLB within each build variant (RELEASE or RESEARCH)
-are **byte-identical raw binaries** — only the IM4P fourcc tag differs.
-The mode-specific behavior (iBSS vs iBEC vs LLB) is determined at runtime, not compile time.
+**Key finding:** This "identical" claim is strictly about the decoded payload bytes.
+At the IM4P container level, iBSS/iBEC/LLB are still different files (different
+fourcc and full-file hashes). Within each build variant (RELEASE or RESEARCH),
+the decoded payload bytes are identical.
+
+Mode/stage identity is therefore not encoded as different payload binaries in
+these pristine IPSW extracts; it comes from how the boot chain loads and treats
+each image.
 
 `fw_patch.py` targets the RELEASE variants, matching the BuildManifest identity
 (`PCC RELEASE` for LLB/iBSS/iBEC). The dynamic patcher works on both variants.
+
+> Note: if you compare files under `vm/...` **after** running patch scripts,
+> RELEASE payloads will no longer be identical (expected), because mode-specific
+> patches are applied to iBEC/LLB.
 
 ## Binary Layout
 
