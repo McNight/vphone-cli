@@ -428,8 +428,11 @@ Unconditionally skips the `generate_nonce(0)` call and all nonce storage logic,
 jumping directly to the "dram-vendor" init. Preserves any existing AP nonce from
 a previous boot or NVRAM.
 
-## Action Item
+## Action Item — DONE
 
-Move `patch_skip_generate_nonce()` from `iboot_jb.py` into the base
-`IBootPatcher` class in `iboot.py`, applying it for `mode="ibss"` only.
-Update `find_all()` to call it when `self.mode == "ibss"`.
+`patch_skip_generate_nonce()` is applied via `IBootJBPatcher` in `fw_patch_jb.py`
+(JB flow only). The iBSS entry was re-added to the JB COMPONENTS list.
+
+This is JB-only because the base boot flow (`fw_patch.py`) does not require nonce
+skip — it only matters for DFU restore scenarios where a deterministic/empty AP nonce
+is needed.
