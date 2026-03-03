@@ -24,7 +24,7 @@ from patchers.txm_jb import TXMJBPatcher
 
 
 def patch_kernelcache_jb(data):
-    kp = KernelJBPatcher(data, verbose=True)
+    kp = KernelJBPatcher(data)
     n = kp.apply()
     print(f"  [+] {n} kernel JB patches applied dynamically")
     return n > 0
