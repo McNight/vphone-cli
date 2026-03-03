@@ -58,16 +58,15 @@ File offset = VA − `0x7006C000`.
 | 5 | Panic bypass | — | — | ✅ | 1 |
 | | **Subtotal** | **4** | **7** | **13** | |
 
-### Missing Patch (should be in base)
+### JB Extension Patch (implemented)
 
-| # | Patch | iBSS | iBEC | LLB |
-|---|-------|:----:|:----:|:---:|
-| 6 | **Skip generate_nonce** | ❌ missing | — | — |
+| # | Patch | Base | JB |
+|---|-------|:----:|:--:|
+| 6 | **Skip generate_nonce** (iBSS only) | — | ✅ |
 
-Currently in `iboot_jb.py` but removed from `fw_patch_jb.py` with comment
-"nonce is not required for boot." The reference script applies it unconditionally
-(not JB-only). Code exists in `IBootJBPatcher.patch_skip_generate_nonce()` and
-works correctly — needs to be moved to base `IBootPatcher`.
+Status: implemented in `IBootJBPatcher.patch_skip_generate_nonce()` and applied
+by `fw_patch_jb.py` (JB flow). This follows the current pipeline split where
+base boot patching stays minimal and nonce control is handled in JB/research flow.
 
 ## Patch Details (RELEASE variant, 26.3)
 
@@ -174,7 +173,7 @@ allowing modified rootfs to boot.
 |-------|-------------|-----|----------|---------|
 | NOP cbnz | `0x01A038` | `0x70086038` | `CBNZ W0, ...` | `NOP` |
 
-### Patch 6: Skip generate_nonce (iBSS only) — MISSING FROM BASE
+### Patch 6: Skip generate_nonce (iBSS only, JB flow)
 
 **Purpose:** Skip nonce generation to preserve the existing AP nonce. Required for
 deterministic DFU restore — without this, iBSS generates a random nonce on each
@@ -213,11 +212,10 @@ The `generate_nonce` function (`sub_70087414`) calls a random number generator
 The patch makes the `TBZ` unconditional so the nonce generation block is always
 skipped, preserving whatever nonce was already set (or leaving it empty).
 
-**Why this belongs in base (not JB-only):**
-The reference patcher applies this unconditionally. In DFU restore mode, a
-fresh random nonce can cause restore failures if the restore tool expects a
-specific nonce or no nonce. The base boot flow already bypasses image4
-validation (patch 2), so there is no security reason to generate a nonce.
+**Current placement (rewrite/JB path):**
+This patch is intentionally kept in the JB extension path (`fw_patch_jb.py` +
+`IBootJBPatcher`) so the base flow remains unchanged. Use JB flow when you need
+deterministic nonce behavior for restore/research scenarios.
 
 ## RELEASE vs RESEARCH_RELEASE Variants
 
@@ -230,7 +228,7 @@ finds them by pattern matching:
 | Serial label 2 | `0x0845F4` | `0x086274` |
 | image4 callback (nop) | `0x009D14` | `0x00A0DC` |
 | image4 callback (mov) | `0x009D18` | `0x00A0E0` |
-| Skip generate_nonce | `0x00B7B8` | `0x00BC08` |
+| Skip generate_nonce *(JB patch)* | `0x00B7B8` | `0x00BC08` |
 
 `fw_patch.py` targets RELEASE, matching the BuildManifest identity
 (PCC RELEASE for LLB/iBSS/iBEC). The reference script used RESEARCH_RELEASE.
@@ -438,11 +436,109 @@ Unconditionally skips the `generate_nonce(0)` call and all nonce storage logic,
 jumping directly to the "dram-vendor" init. Preserves any existing AP nonce from
 a previous boot or NVRAM.
 
-## Action Item — DONE
+## Appendix E: Nonce Skip — IDA Pseudocode Before/After
 
-`patch_skip_generate_nonce()` is applied via `IBootJBPatcher` in `fw_patch_jb.py`
-(JB flow only). The iBSS entry was re-added to the JB COMPONENTS list.
+### generate_nonce (`sub_70087414`)
 
-This is JB-only because the base boot flow (`fw_patch.py`) does not require nonce
-skip — it only matters for DFU restore scenarios where a deterministic/empty AP nonce
-is needed.
+```c
+unsigned __int64 generate_nonce()
+{
+  platform_state *ps = get_platform_state();
+
+  if ( (ps->flags & 2) != 0 )           // nonce already generated?
+    goto return_existing;
+
+  uint64_t nonce = random64(0);          // generate random 64-bit value
+  *(uint64_t *)(ps + 40) = nonce;        // store nonce
+  *(uint32_t *)ps |= 2u;                // mark nonce as valid
+
+  if ( !*(uint32_t *)(ps + 40) )         // sanity: nonce_lo == 0?
+  {
+    v4 = get_platform_state2();
+    log_assert(v4, 1630);                // "nonce is zero" assertion
+  return_existing:
+    nonce = *(uint64_t *)(ps + 40);      // return existing nonce
+  }
+  return nonce;
+}
+```
+
+### platform_init — boot-nonce region: BEFORE patch
+
+```c
+  // --- Phase 1: read existing boot-nonce from env ---
+  env_get(...,                                    /*0x70077754*/
+    "effective-security-mode-ap",
+    "effective-security-mode-ap", ...);
+  env_check_property(...);                        /*0x7007776c*/
+  if ( (v271 & 1) != 0 )                         /*0x70077770*/
+  {
+    // existing nonce found — security mode check
+    v97 = get_security_mode();                    /*0x70077778*/
+    v279 = validate_security(v97);                /*0x7007777c*/
+    if ( !v42 || v279 >= v280 )                   /*0x70077780*/
+      goto LABEL_311;                             // error path
+  }
+
+  // --- Phase 2: set boot-nonce env, check if generation needed ---
+  env_set(...,                                    /*0x7007779c*/
+    "boot-nonce",
+    "boot-nonce", ...);
+  env_clear();                                    /*0x700777a0*/
+  v290 = env_check_property(...);                 /*0x700777b4*/
+
+  if ( (v290 & 1) != 0 )                         /*0x700777b8  ← TBZ W0, #0*/
+  {
+    nonce = generate_nonce();                     /*0x700777c4  ← BL generate_nonce*/
+    sub_70079680(nonce);                          /*0x700777c8*/
+    sub_700A8F24(...);                            /*0x700777ec  — commit nonce to env*/
+  }
+
+  // --- Phase 3: continue with dram-vendor init ---
+  env_get(...,                                    /*0x70077800*/
+    "dram-vendor",
+    "dram-vendor", ...);
+```
+
+### platform_init — boot-nonce region: AFTER patch
+
+```c
+  // --- Phase 2: set boot-nonce env ---
+  env_set(...,                                    /*0x7007779c*/
+    "boot-nonce",
+    "boot-nonce", ...);
+  env_clear();                                    /*0x700777a0*/
+  v290 = env_check_property(...);                 /*0x700777b4*/
+
+  // generate_nonce() block ELIMINATED by decompiler
+  // (unconditional B at 0x700777B8 makes it dead code)
+
+  // --- Phase 3: continue with dram-vendor init ---
+  v298 = env_get(...,                             /*0x70077800*/
+    "dram-vendor",
+    "dram-vendor", ...);
+```
+
+**Patch effect in decompiler:** The entire `if` block containing `generate_nonce()`
+is removed. The decompiler recognizes the unconditional `B` creates dead code and
+eliminates it entirely — execution flows straight from `env_check_property()` to
+the `"dram-vendor"` env_get.
+
+### Byte Comparison
+
+Reference: `patch(0x1b544, 0x1400000e)` (26.1 RESEARCH, hardcoded)
+
+| | Reference (26.1) | Dynamic (26.3 RELEASE) | Dynamic (26.3 RESEARCH) |
+|---|---|---|---|
+| **Offset** | `0x1B544` | `0x0B7B8` | `0x0BC08` |
+| **Original** | `TBZ W0, #0, +0x38` | `TBZ W0, #0, +0x38` | `TBZ W0, #0, +0x38` |
+| **Patched** | `B +0x38` | `B +0x38` | `B +0x38` |
+| **Bytes** | `0E 00 00 14` | `0E 00 00 14` | `0E 00 00 14` |
+
+All three produce byte-identical `0x1400000E` — same branch delta `+0x38` (14 words)
+across all variants. Only the file offset differs between versions.
+
+## Status
+
+`patch_skip_generate_nonce()` is active in the rewrite/JB path via
+`IBootJBPatcher` and `fw_patch_jb.py` (iBSS JB component enabled).
