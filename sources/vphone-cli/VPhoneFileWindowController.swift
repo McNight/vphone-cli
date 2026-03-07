@@ -5,6 +5,7 @@ import SwiftUI
 class VPhoneFileWindowController {
     private var window: NSWindow?
     private var model: VPhoneFileBrowserModel?
+    private var eventMonitor: Any?
 
     func showWindow(control: VPhoneControl) {
         // Reuse existing window
@@ -41,15 +42,32 @@ class VPhoneFileWindowController {
         window.makeKeyAndOrderFront(nil)
         self.window = window
 
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, let window = self.window, window.isKeyWindow else { return event }
+            if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "w" {
+                window.performClose(nil)
+                return nil
+            }
+            return event
+        }
+
         NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification,
             object: window,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
-                self?.window = nil
-                self?.model = nil
+            MainActor.assumeIsolated {
+                self?.handleWindowWillCloseNotification()
             }
         }
+    }
+
+    private func handleWindowWillCloseNotification() {
+        if let monitor = eventMonitor {
+            NSEvent.removeMonitor(monitor)
+            eventMonitor = nil
+        }
+        window = nil
+        model = nil
     }
 }
