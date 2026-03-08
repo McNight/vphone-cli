@@ -165,12 +165,17 @@ echo "  PATH=$DISCOVERED_PATH"
 # prep_bootstrap.sh's chsh has no effect because dropbear doesn't consult passwd.
 # Create ~/.bashrc so the interactive subshell sources /var/jb/etc/profile (full PATH).
 echo "[*] Setting up shell profile for interactive SSH..."
-if ! ssh_cmd "test -f /var/root/.bashrc"; then
-    ssh_cmd "printf '%s\n' '# Source JB environment' '[ -r /var/jb/etc/profile ] && . /var/jb/etc/profile' > /var/root/.bashrc"
-    echo "  [+] /var/root/.bashrc created"
-else
-    echo "  [*] /var/root/.bashrc already exists, skipping"
-fi
+# .bashrc  — non-login interactive shells (dropbear default)
+# .bash_profile — login shells (some SSH configurations)
+# Both source /var/jb/etc/profile to get the full JB PATH.
+for profile in /var/root/.bashrc /var/root/.bash_profile; do
+    if ! ssh_cmd "test -f '$profile'"; then
+        ssh_cmd "printf '%s\n' '# Source JB environment' '[ -r /var/jb/etc/profile ] && . /var/jb/etc/profile' > '$profile'"
+        echo "  [+] $profile created"
+    else
+        echo "  [*] $profile already exists, skipping"
+    fi
+done
 
 # ═══════════ 4/6 CREATE MARKER FILES ═════════════════════════
 echo ""
